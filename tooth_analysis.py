@@ -5,13 +5,20 @@ This module provides:
 - Structured tooth component extraction from segmentation masks
 - FDI (Fédération Dentaire Internationale) tooth numbering
 - Edentulous zone detection and measurement
+- Physical (mm) measurement conversion with uncertainty quantification
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 from scipy.spatial import distance as dist
 from sklearn.cluster import KMeans
+
+if TYPE_CHECKING:
+    from physical_metrics import PanoMetricPriors, EdentulousZonePhysical
 
 
 @dataclass
@@ -679,3 +686,170 @@ def print_analysis_report(result: DentalAnalysisResult) -> str:
     report = "\n".join(lines)
     print(report)
     return report
+
+
+def convert_zones_to_physical(
+    result: DentalAnalysisResult,
+    priors: PanoMetricPriors,
+) -> list[EdentulousZonePhysical]:
+    """
+    Convert edentulous zones to physical (mm) measurements.
+
+    Args:
+        result: DentalAnalysisResult from analyze_dental_panorama
+        priors: Calibration priors from physical_metrics module
+
+    Returns:
+        List of EdentulousZonePhysical with mm measurements and uncertainty
+
+    Example:
+        >>> from physical_metrics import create_priors_from_image_dimensions
+        >>> priors = create_priors_from_image_dimensions(3126, 1300, fov_width_mm=270)
+        >>> zones_mm = convert_zones_to_physical(analysis_result, priors)
+        >>> for zone in zones_mm:
+        ...     print(f"Zone width: {zone.width}")
+    """
+    from physical_metrics import measure_edentulous_zone_physical
+
+    return [
+        measure_edentulous_zone_physical(zone, priors)
+        for zone in result.edentulous_zones
+    ]
+
+
+def visualize_analysis_physical(
+    original_image: np.ndarray,
+    result: DentalAnalysisResult,
+    priors: PanoMetricPriors,
+    show_fdi_labels: bool = True,
+    show_zones: bool = True,
+    show_measurements: bool = True,
+    show_confidence: bool = True,
+) -> np.ndarray:
+    """
+    Create visualization with physical (mm) measurements.
+
+    Args:
+        original_image: Original X-ray image (BGR)
+        result: DentalAnalysisResult from analyze_dental_panorama
+        priors: Calibration priors for mm conversion
+        show_fdi_labels: Draw FDI numbers on each tooth
+        show_zones: Highlight edentulous zones
+        show_measurements: Show physical measurements
+        show_confidence: Show confidence level indicators
+
+    Returns:
+        Annotated image (BGR) with physical measurements
+    """
+    from physical_metrics import measure_edentulous_zone_physical, ConfidenceLevel
+
+    image = original_image.copy()
+    if len(image.shape) == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+
+    # Draw teeth with FDI labels
+    if show_fdi_labels:
+        for tooth in result.detected_teeth:
+            color = (0, 255, 0)  # Green for detected teeth
+            cv2.drawContours(image, [tooth.contour], 0, color, 2)
+
+            if tooth.fdi_number:
+                cx, cy = int(tooth.centroid[0]), int(tooth.centroid[1])
+                label = str(tooth.fdi_number)
+
+                (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.rectangle(image,
+                              (cx - text_w // 2 - 2, cy - text_h - 2),
+                              (cx + text_w // 2 + 2, cy + 2),
+                              (0, 0, 0), -1)
+                cv2.putText(image, label,
+                           (cx - text_w // 2, cy),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    # Draw edentulous zones with physical measurements
+    if show_zones:
+        for zone in result.edentulous_zones:
+            zone_physical = measure_edentulous_zone_physical(zone, priors)
+
+            x, y, w, h = zone.bbox
+            if w > 0 and h > 0:
+                # Color based on confidence level
+                if show_confidence:
+                    confidence = zone_physical.width.confidence
+                    if confidence == ConfidenceLevel.HIGH:
+                        color = (0, 200, 0)    # Green - high confidence
+                    elif confidence == ConfidenceLevel.MEDIUM:
+                        color = (0, 165, 255)  # Orange - medium
+                    elif confidence == ConfidenceLevel.LOW:
+                        color = (0, 100, 255)  # Red-orange - low
+                    else:
+                        color = (0, 0, 255)    # Red - very low
+                else:
+                    color = (0, 0, 255)  # Red
+
+                # Draw rectangle
+                cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
+
+                # Hatched fill pattern
+                for i in range(0, w + h, 10):
+                    pt1 = (x + min(i, w), y + max(0, i - w))
+                    pt2 = (x + max(0, i - h), y + min(i, h))
+                    cv2.line(image, pt1, pt2, color, 1)
+
+                if show_measurements:
+                    # Missing FDI numbers
+                    missing_str = ",".join(str(f) for f in zone.missing_fdi_numbers[:3])
+                    if len(zone.missing_fdi_numbers) > 3:
+                        missing_str += "..."
+
+                    # Physical dimensions
+                    width_mm = zone_physical.width.value_mm
+                    height_mm = zone_physical.height.value_mm
+                    uncertainty = zone_physical.width.uncertainty_percent
+
+                    # Label with physical measurements
+                    label1 = f"Missing: {missing_str}"
+                    label2 = f"{width_mm:.1f}x{height_mm:.1f}mm"
+
+                    if show_confidence:
+                        conf_str = zone_physical.width.confidence.value[0].upper()  # H/M/L/V
+                        label2 += f" [{conf_str}]"
+
+                    cv2.putText(image, label1, (x, y - 50),
+                               cv2.FONT_HERSHEY_DUPLEX, 1, color, 2)
+                    cv2.putText(image, label2, (x, y - 15),
+                               cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+                    # Range below
+                    range_str = f"({zone_physical.width.min_mm:.1f}-{zone_physical.width.max_mm:.1f}mm)"
+                    cv2.putText(image, range_str, (x, y + h + 25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+    # Summary text at top
+    calibration_note = "CALIBRATED" if priors.is_calibrated() else "UNCALIBRATED"
+    summary = f"Detected: {result.total_detected} | Missing: {result.total_missing} | {calibration_note}"
+    cv2.rectangle(image, (5, 5), (600, 30), (0, 0, 0), -1)
+    cv2.putText(image, summary, (10, 25),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    # Legend for confidence colors
+    if show_confidence and show_zones:
+        legend_y = 50
+        cv2.rectangle(image, (5, legend_y), (200, legend_y + 80), (0, 0, 0), -1)
+        cv2.putText(image, "Confidence:", (10, legend_y + 15),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.rectangle(image, (10, legend_y + 22), (20, legend_y + 32), (0, 200, 0), -1)
+        cv2.putText(image, "High", (25, legend_y + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        cv2.rectangle(image, (60, legend_y + 22), (70, legend_y + 32), (0, 165, 255), -1)
+        cv2.putText(image, "Med", (75, legend_y + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        cv2.rectangle(image, (110, legend_y + 22), (120, legend_y + 32), (0, 100, 255), -1)
+        cv2.putText(image, "Low", (125, legend_y + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        cv2.rectangle(image, (160, legend_y + 22), (170, legend_y + 32), (0, 0, 255), -1)
+        cv2.putText(image, "V.Low", (175, legend_y + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+
+        # Warning for uncalibrated
+        if not priors.is_calibrated():
+            cv2.putText(image, "! Uncalibrated - verify with CBCT", (10, legend_y + 55),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 100, 255), 1)
+
+    return image
