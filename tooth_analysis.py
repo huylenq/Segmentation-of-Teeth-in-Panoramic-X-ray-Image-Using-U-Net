@@ -879,7 +879,7 @@ def visualize_analysis_physical(
                         label2 += f" [{conf_str}]"
 
                     _draw_text_with_background(
-                        image, label1, (x, y - 60),
+                        image, label1, (x, y - 66),
                         font=cv2.FONT_HERSHEY_DUPLEX, font_scale=1.0,
                         text_color=color, thickness=2, alpha=0.7
                     )
