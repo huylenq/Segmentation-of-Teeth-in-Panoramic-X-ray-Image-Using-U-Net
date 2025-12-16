@@ -614,13 +614,13 @@ def visualize_analysis(
                         missing_str += "..."
 
                     label = f"Missing: {missing_str}"
-                    cv2.putText(image, label, (x, y - 5),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                    cv2.putText(image, label, (x, y - 15),
+                               cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 0, 255), 2)
 
                     # Dimensions
                     dim_label = f"{w}x{h}px"
-                    cv2.putText(image, dim_label, (x, y + h + 15),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+                    cv2.putText(image, dim_label, (x, y + h + 30),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
     # Summary text at top
     summary = f"Detected: {result.total_detected} | Missing: {result.total_missing} | Reference: {result.reference_count}"
