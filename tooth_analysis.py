@@ -554,6 +554,64 @@ def analyze_dental_panorama(
     )
 
 
+def _draw_text_with_background(
+    image: np.ndarray,
+    text: str,
+    position: tuple[int, int],
+    font: int = cv2.FONT_HERSHEY_SIMPLEX,
+    font_scale: float = 0.6,
+    text_color: tuple[int, int, int] = (255, 255, 255),
+    bg_color: tuple[int, int, int] = (0, 0, 0),
+    thickness: int = 2,
+    padding: int = 4,
+    alpha: float = 0.7,
+) -> np.ndarray:
+    """
+    Draw text with a semi-transparent background.
+
+    Args:
+        image: Image to draw on (modified in place)
+        text: Text to draw
+        position: (x, y) position for text baseline
+        font: OpenCV font
+        font_scale: Font scale factor
+        text_color: BGR text color
+        bg_color: BGR background color
+        thickness: Text thickness
+        padding: Padding around text
+        alpha: Background opacity (0.0 = transparent, 1.0 = opaque)
+
+    Returns:
+        Modified image
+    """
+    x, y = position
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+    # Calculate background rectangle coordinates
+    x1 = x - padding
+    y1 = y - text_h - padding
+    x2 = x + text_w + padding
+    y2 = y + baseline + padding
+
+    # Clamp to image bounds
+    h, w = image.shape[:2]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w, x2), min(h, y2)
+
+    # Create overlay for semi-transparent background
+    if alpha < 1.0:
+        overlay = image.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), bg_color, -1)
+        cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
+    else:
+        cv2.rectangle(image, (x1, y1), (x2, y2), bg_color, -1)
+
+    # Draw text
+    cv2.putText(image, text, (x, y), font, font_scale, text_color, thickness)
+
+    return image
+
+
 def visualize_analysis(
     original_image: np.ndarray,
     result: DentalAnalysisResult,
@@ -621,13 +679,19 @@ def visualize_analysis(
                         missing_str += "..."
 
                     label = f"Missing: {missing_str}"
-                    cv2.putText(image, label, (x, y - 15),
-                               cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 0, 255), 2)
+                    _draw_text_with_background(
+                        image, label, (x, y - 15),
+                        font=cv2.FONT_HERSHEY_DUPLEX, font_scale=1.0,
+                        text_color=(0, 0, 255), thickness=2, alpha=0.7
+                    )
 
                     # Dimensions
                     dim_label = f"{w}x{h}px"
-                    cv2.putText(image, dim_label, (x, y + h + 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                    _draw_text_with_background(
+                        image, dim_label, (x, y + h + 30),
+                        font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=0.8,
+                        text_color=(0, 0, 255), thickness=2, alpha=0.7
+                    )
 
     # Summary text at top
     summary = f"Detected: {result.total_detected} | Missing: {result.total_missing} | Reference: {result.reference_count}"
@@ -805,7 +869,6 @@ def visualize_analysis_physical(
                     # Physical dimensions
                     width_mm = zone_physical.width.value_mm
                     height_mm = zone_physical.height.value_mm
-                    uncertainty = zone_physical.width.uncertainty_percent
 
                     # Label with physical measurements
                     label1 = f"Missing: {missing_str}"
@@ -815,15 +878,24 @@ def visualize_analysis_physical(
                         conf_str = zone_physical.width.confidence.value[0].upper()  # H/M/L/V
                         label2 += f" [{conf_str}]"
 
-                    cv2.putText(image, label1, (x, y - 50),
-                               cv2.FONT_HERSHEY_DUPLEX, 1, color, 2)
-                    cv2.putText(image, label2, (x, y - 15),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                    _draw_text_with_background(
+                        image, label1, (x, y - 60),
+                        font=cv2.FONT_HERSHEY_DUPLEX, font_scale=1.0,
+                        text_color=color, thickness=2, alpha=0.7
+                    )
+                    _draw_text_with_background(
+                        image, label2, (x, y - 25),
+                        font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1.0,
+                        text_color=color, thickness=2, alpha=0.7
+                    )
 
                     # Range below
                     range_str = f"({zone_physical.width.min_mm:.1f}-{zone_physical.width.max_mm:.1f}mm)"
-                    cv2.putText(image, range_str, (x, y + h + 25),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                    _draw_text_with_background(
+                        image, range_str, (x, y + h + 35),
+                        font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1.0,
+                        text_color=color, thickness=2, alpha=0.7
+                    )
 
     # Summary text at top
     calibration_note = "CALIBRATED" if priors.is_calibrated() else "UNCALIBRATED"
